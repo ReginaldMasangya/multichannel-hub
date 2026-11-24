@@ -1,0 +1,51 @@
+# Starts everything except the hub and dashboard (those run from your venv).
+# Run:  docker compose up -d      Stop:  docker compose down
+services:
+  hub-db:                       # Hub's Postgres (source of truth)
+    image: postgres:16
+    environment:
+      POSTGRES_USER: hub
+      POSTGRES_PASSWORD: hub
+      POSTGRES_DB: hub
+    ports:
+      - "5433:5432"             # 5433 on your laptop, so it won't clash with a local Postgres
+    volumes:
+      - hub-db-data:/var/lib/postgresql/data
+
+  woo-db:                       # MySQL for WordPress/WooCommerce
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: wordpress
+      MYSQL_USER: wp
+      MYSQL_PASSWORD: wp
+      MYSQL_ROOT_PASSWORD: rootpw
+    volumes:
+      - woo-db-data:/var/lib/mysql
+
+  woocommerce:                  # Channel A: WordPress (install WooCommerce plugin in wp-admin)
+    image: wordpress:latest
+    depends_on:
+      - woo-db
+    environment:
+      WORDPRESS_DB_HOST: woo-db
+      WORDPRESS_DB_USER: wp
+      WORDPRESS_DB_PASSWORD: wp
+      WORDPRESS_DB_NAME: wordpress
+    ports:
+      - "8080:80"
+    volumes:
+      - woo-data:/var/www/html
+
+  marketplace:                  # Channel B: mock marketplace API from db.json
+    image: node:22-alpine
+    working_dir: /app
+    command: npx -y json-server@0.17.4 --watch db.json --host 0.0.0.0 --port 3001
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./mock-marketplace:/app
+
+volumes:
+  hub-db-data:
+  woo-db-data:
+  woo-data:
