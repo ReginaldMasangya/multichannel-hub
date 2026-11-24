@@ -3,8 +3,8 @@ import os
 from datetime import datetime
 
 from dotenv import load_dotenv
-from sqlalchemy import (Column, DateTime, ForeignKey, Integer, Numeric, String,
-                        Text, UniqueConstraint, create_engine)
+from sqlalchemy import (Boolean, Column, DateTime, ForeignKey, Integer, Numeric,
+                        String, Text, UniqueConstraint, create_engine)
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 load_dotenv()
@@ -35,6 +35,9 @@ class ChannelListing(Base):
     external_id = Column(String(64))                    # the channel's own product ID
     title = Column(String(200))
     last_synced_at = Column(DateTime)
+    needs_push = Column(Boolean, nullable=False, default=False)   # True = a push to this channel is pending/failed
+    push_attempts = Column(Integer, nullable=False, default=0)    # resets to 0 on success, caps retries at 5
+    last_push_error = Column(Text)                                # message from the most recent failed push
     __table_args__ = (UniqueConstraint("product_id", "channel"),)
 
 
@@ -62,6 +65,13 @@ class StockEvent(Base):
     reason = Column(String(64))                         # "sale", "restock", "rejected_oversell"
     channel = Column(String(32))
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SyncState(Base):
+    """One row per channel: when the worker last pulled orders from it."""
+    __tablename__ = "sync_state"
+    channel = Column(String(32), primary_key=True)       # "woocommerce" | "marketplace"
+    last_synced_at = Column(DateTime)
 
 
 def init_db():

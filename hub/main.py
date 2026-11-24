@@ -8,10 +8,18 @@ from fastapi.responses import StreamingResponse
 from hub.db import ChannelListing, Order, Product, SessionLocal, StockEvent, engine, init_db
 from hub.llm import adapt_listing
 from hub.sync import CHANNELS, pull_orders
+from pydantic import BaseModel
 
 app = FastAPI(title="Multichannel Hub")
 init_db()
 
+class NewListing(BaseModel):
+    sku: str
+    name: str
+    price: float
+    stock: int
+    description: str | None = None
+    category: str | None = None
 
 @app.get("/health")
 def health():
@@ -46,6 +54,19 @@ def publish(sku: str):
         s.commit()
         return results
 
+
+@app.post("/products")
+def create_listing(listing: NewListing):
+    with SessionLocal() as s:
+        if s.query(Product).filter_by(sku=listing.sku).first():
+            raise HTTPException(400, "SKU already exists")
+        
+        p = Product(sku=listing.sku, name=listing.name, price=listing.price, stock=listing.stock, description=listing.description, category=listing.category)
+
+        s.add(p)
+        s.commit()
+
+        return {"sku": p.sku, "name": p.name}
 
 @app.post("/sync/orders")
 def sync_orders():
