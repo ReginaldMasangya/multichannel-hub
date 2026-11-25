@@ -1,4 +1,4 @@
-# Carryover — branch `wednesday-import` (not yet merged into `main`)
+# Carryover — branch `prestashop-docker-and-import` (not yet merged into `main`)
 
 Session date: Wed 25 Nov 2026. Demo: Fri 27 Nov.
 

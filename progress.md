@@ -1,6 +1,6 @@
 # Build progress
 
-Last updated: Wed 25 Nov 2026, end of the `wednesday-import` session.
+Last updated: Wed 25 Nov 2026, end of the `prestashop-docker-and-import` session.
 
 Channel B changed from the JSON Server mock to PrestaShop (see `PLAN.md`).
 
@@ -57,4 +57,4 @@ Foundations and demo data are in place. Next most important: the live flow (Fetc
 - PrestaShop standing in for the marketplace — confirm with Gareth/Aaron (open in the plan doc).
 - `PLAN.md` task ticks were not updated this session. The online plan doc is the source of truth.
 
-Details and known bugs: `carryovers/wednesday-import.md`.
+Details and known bugs: `carryovers/prestashop-docker-and-import.md`.
