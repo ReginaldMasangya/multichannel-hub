@@ -2,7 +2,7 @@
 
 Flow when a sale happens on any channel:
   1. pull_orders() fetches new orders from every channel
-  2. apply_sale() decides whether the sale is accepted and updates master stock  <-- YOU WRITE THIS
+  2. apply_sale() decides whether the sale is accepted and updates master stock
   3. push_stock_everywhere() sends the new stock number to every channel
 """
 import httpx, logging
@@ -23,19 +23,20 @@ def apply_sale(session: Session, channel: str, sku: str, qty: int) -> bool:
 
     Return True if the sale is accepted, False if rejected.
 
-    Things to decide:
-      - If qty > product.stock (the other channel already sold the last unit),
-        do you reject the order, accept it as a backorder (stock goes negative),
-        or accept only part of it?
-      - Log every change as a StockEvent (change=-qty, reason="sale" or
-        "rejected_oversell", channel=channel) so the dashboard can show it.
-      - Hint: session.query(Product).filter_by(sku=sku).with_for_update().first()
-        locks the row, so two syncs running at once can't both take the last unit.
+    Policy: reject oversells. The row is locked so concurrent syncs can't both
+    take the last unit. A rejected sale logs a zero-change event for auditing.
 
     Don't commit here; pull_orders() commits once at the end.
     """
-    # TODO(Reginald): implement your oversell policy (about 5-10 lines)
-    raise NotImplementedError
+    product = session.query(Product).filter_by(sku=sku).with_for_update().first()
+    if product is None:
+        return False
+    if qty > product.stock:
+        session.add(StockEvent(sku=sku, change=0, reason="rejected_oversell", channel=channel))
+        return False
+    product.stock -= qty
+    session.add(StockEvent(sku=sku, change=-qty, reason="sale", channel=channel))
+    return True
 
 
 def push_stock_everywhere(session: Session, product: Product) -> None:
@@ -52,20 +53,6 @@ def push_stock_everywhere(session: Session, product: Product) -> None:
             listing.needs_push = False
             listing.push_attempts = 0
             listing.last_push_error = None
-            # TODO(Reginald): implement the retry policy (about 5-10 lines).
-            #
-            # Decide whether `e` is temporary or permanent, then update the
-            # listing accordingly:
-            #   - temporary (timeout, 5xx, 429 — worth retrying): bump
-            #     listing.push_attempts by 1
-            #   - permanent (400/401/403/404 — retrying won't help): jump
-            #     listing.push_attempts straight to the cap (5)
-            # Either way: listing.needs_push = True, listing.last_push_error = str(e)
-            #
-            # Hint: an httpx error response (from r.raise_for_status()) is
-            # httpx.HTTPStatusError, and e.response.status_code gives the code.
-            # A plain timeout/connection failure is httpx.RequestError, which
-            # has no .response — treat those as temporary.
         except httpx.TimeoutException as e:
             logger.warning(f"Timeout while pushing stock for {product.sku} to {listing.channel}: {e}")
             listing.needs_push = True

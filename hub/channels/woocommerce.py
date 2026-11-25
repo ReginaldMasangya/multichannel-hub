@@ -18,6 +18,29 @@ def create_listing(sku: str, title: str, description: str, price: float, stock: 
     return str(r.json()["id"])
 
 
+def import_listings() -> list[dict]:
+    """Fetch every product from Woo as [{external_id, sku, title, description, price, stock}]."""
+    rows = []
+    page = 1
+    while True:
+        r = httpx.get(f"{BASE}/products", auth=_auth(),
+                      params={"per_page": 100, "page": page})
+        r.raise_for_status()
+        batch = r.json()
+        if not batch:
+            break
+        for p in batch:
+            rows.append({"external_id": str(p["id"]), "sku": p.get("sku") or "",
+                         "title": p.get("name") or "",
+                         "description": p.get("description") or "",
+                         "price": float(p.get("regular_price") or p.get("price") or 0),
+                         "stock": int(p.get("stock_quantity") or 0)})
+        if len(batch) < 100:
+            break
+        page += 1
+    return rows
+
+
 def update_stock(external_id: str, stock: int) -> None:
     httpx.put(f"{BASE}/products/{external_id}", auth=_auth(),
               json={"stock_quantity": stock}).raise_for_status()

@@ -29,9 +29,6 @@ def _overlap_stock(woo_stock: int) -> int:
     The ~10 SKUs seeded onto BOTH channels need a marketplace stock number
     that's deliberately different from what Woo got, so tomorrow's Import
     has a real conflict to resolve with the lower-stock-wins rule.
-
-    TODO(Reginald): decide how it should differ — always lower, a random
-    amount off, sometimes higher. Just don't return woo_stock unchanged.
     """
     if woo_stock < 0:
         raise ValueError(f"The Woo stock must be non-negative value. Current Woo stock: {woo_stock}")
@@ -88,9 +85,6 @@ def seed_history(n_orders: int = 50, days: int = 30) -> None:
 
         s.commit()
     print(f"Wrote {n_orders} past orders across {len(products)} products")
-    # TODO: once sync_state exists (Tuesday item #5), set last_synced_at = now
-    # for both channels here, so the worker doesn't re-fetch anything that's
-    # already sitting on Woo or the marketplace as if it were new.
 
 
 def main():

@@ -14,6 +14,16 @@ def create_listing(sku: str, title: str, description: str, price: float, stock: 
     return str(r.json()["id"])
 
 
+def import_listings() -> list[dict]:
+    """Fetch every listing as [{external_id, sku, title, description, price, stock}]."""
+    r = httpx.get(f"{BASE}/listings")
+    r.raise_for_status()
+    return [{"external_id": str(l["id"]), "sku": l.get("sku") or "",
+             "title": l.get("title") or "", "description": l.get("description") or "",
+             "price": float(l.get("price") or 0), "stock": int(l.get("stock") or 0)}
+            for l in r.json()]
+
+
 def update_stock(external_id: str, stock: int) -> None:
     httpx.patch(f"{BASE}/listings/{external_id}", json={"stock": stock}).raise_for_status()
 
