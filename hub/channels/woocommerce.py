@@ -5,6 +5,9 @@ import httpx
 
 BASE = os.getenv("WOO_URL", "http://localhost:8080") + "/wp-json/wc/v3"
 
+# Orders that must not take stock. "checkout-draft" is a checkout nobody finished.
+DEAD_STATUSES = {"cancelled", "failed", "refunded", "trash", "checkout-draft"}
+
 
 def _auth():
     return (os.environ["WOO_CONSUMER_KEY"], os.environ["WOO_CONSUMER_SECRET"])
@@ -46,12 +49,19 @@ def update_stock(external_id: str, stock: int) -> None:
               json={"stock_quantity": stock}).raise_for_status()
 
 
+def is_sale(status: str) -> bool:
+    """Same rule as PrestaShop: unpaid orders reserve stock, dead orders don't."""
+    return status not in DEAD_STATUSES
+
+
 def fetch_orders() -> list[dict]:
     """Flatten Woo orders into one row per line item: [{external_id, sku, qty, total, status}]."""
     r = httpx.get(f"{BASE}/orders", auth=_auth(), params={"per_page": 50})
     r.raise_for_status()
     rows = []
     for o in r.json():
+        if not is_sale(o["status"]):
+            continue  # not saved in the hub, so it's picked up if it later revives
         for item in o["line_items"]:
             rows.append({"external_id": f'{o["id"]}-{item["id"]}', "sku": item["sku"],
                          "qty": item["quantity"], "total": item["total"],

@@ -14,9 +14,11 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from hub.channels import marketplace, woocommerce
-from hub.db import Order, Product, SessionLocal, StockEvent, init_db
+from hub.db import (ChannelListing, Order, Product, SessionLocal, StockEvent,
+                    SyncState, init_db)
 
 CSV_PATH = Path(__file__).resolve().parent.parent / "data" / "seed_products.csv"
+CHANNEL_NAMES = ["woocommerce", "marketplace"]
 
 
 def _load_catalog() -> list[dict]:
@@ -69,19 +71,37 @@ def seed_history(n_orders: int = 50, days: int = 30) -> None:
                   "Products page's Import button, before --history.")
             return
 
+        if s.query(Order).filter(Order.external_id.like("SEED-%")).first():
+            print("History is already seeded. Nothing to do.")
+            return
+
+        # A past sale can only happen on a channel that lists the product.
+        listed_on = {}
+        for listing in s.query(ChannelListing).order_by(ChannelListing.id):
+            listed_on.setdefault(listing.product_id, []).append(listing.channel)
+        products = [p for p in products if p.id in listed_on]
+        if not products:
+            print("No products are listed on a channel yet. Run Import before --history.")
+            return
+
         now = datetime.utcnow()
         for i in range(n_orders):
             product = random.choice(products)
-            qty = random.randint(1, min(3, max(product.stock, 1)))
-            channel = random.choice(["woocommerce", "marketplace"])
+            qty = random.randint(1, 3)
+            channel = random.choice(listed_on[product.id])
             placed_at = now - timedelta(days=random.uniform(0, days))
 
+            # product.stock is left alone: it's today's stock, which already
+            # matches the channels. These sales happened before it was counted.
             s.add(Order(channel=channel, external_id=f"SEED-{i}", sku=product.sku,
                         qty=qty, total=product.price * qty, status="delivered",
                         created_at=placed_at))
-            product.stock = max(product.stock - qty, 0)
             s.add(StockEvent(sku=product.sku, change=-qty, reason="sale",
                              channel=channel, created_at=placed_at))
+
+        # Tell the worker that everything up to now is already handled.
+        for channel in CHANNEL_NAMES:
+            s.merge(SyncState(channel=channel, last_synced_at=now))
 
         s.commit()
     print(f"Wrote {n_orders} past orders across {len(products)} products")

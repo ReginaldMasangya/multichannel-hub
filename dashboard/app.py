@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 HUB = os.getenv("HUB_URL", "http://localhost:8000")
+HUB_PUBLIC = os.getenv("HUB_PUBLIC_URL", HUB)  # the hub's address as your browser sees it
 
 st.set_page_config(page_title="Multichannel Hub", layout="wide")
 page = st.sidebar.radio("Page", ["Products", "Orders", "Dashboard"])
@@ -44,4 +45,4 @@ else:
         st.plotly_chart(px.bar(orders.groupby("channel", as_index=False)["total"].sum(),
                                x="channel", y="total", title="Sales by channel"),
                         use_container_width=True)
-    st.link_button("Download orders (XLSX)", f"{HUB}/export?table=orders&format=xlsx")
+    st.link_button("Download orders (XLSX)", f"{HUB_PUBLIC}/export?table=orders&format=xlsx")

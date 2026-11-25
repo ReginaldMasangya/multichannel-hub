@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 
 from hub.db import ChannelListing, Order, Product, SessionLocal, StockEvent, engine, init_db
 from hub.llm import adapt_listing
-from hub.sync import CHANNELS, pull_orders
+from hub.sync import CHANNELS, pull_orders, push_stock_everywhere
 from pydantic import BaseModel
 
 app = FastAPI(title="Multichannel Hub")
@@ -36,7 +36,8 @@ def list_products():
 
 @app.post("/products/import")
 def import_products():
-    """Pull listings from every channel into the hub, matched by SKU.
+    """Pull listings from every channel into the hub, matched by SKU, then push
+    the hub's stock number back so every channel agrees.
 
     Only stock is merged: the lowest stock across channels (and any existing
     hub row) wins, so the hub never overstates availability. Existing hub
@@ -59,6 +60,7 @@ def import_products():
             bucket["rows"].append((name, row))
 
     created = updated = linked = 0
+    push_failed = []
     with SessionLocal() as s:
         for sku, bucket in grouped.items():
             product = s.query(Product).filter_by(sku=sku).first()
@@ -87,12 +89,21 @@ def import_products():
                     listing.title = row["title"]
                     listing.last_synced_at = datetime.utcnow()
                 linked += 1
+
+            # A failed push doesn't raise: it's recorded on the listing for retry.
+            push_stock_everywhere(s, product)
+            push_failed += [
+                {"sku": sku, "channel": l.channel, "error": l.last_push_error}
+                for l in s.query(ChannelListing).filter_by(
+                    product_id=product.id, needs_push=True)]
         s.commit()
 
     result = {"skus": len(grouped), "created": created, "updated": updated,
               "listings": linked}
     if errors:
         result["errors"] = errors
+    if push_failed:
+        result["push_failed"] = push_failed
     return result
 
 
