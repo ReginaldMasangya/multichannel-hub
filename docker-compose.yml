@@ -1,5 +1,13 @@
-# Starts everything except the hub and dashboard (those run from your venv).
-# Run:  docker compose up -d      Stop:  docker compose down
+# Starts the databases, both stores, the hub API and the dashboard.
+# Run:  docker compose up -d --build      Stop:  docker compose down
+
+# Inside Docker, containers reach each other by service name, not localhost.
+# These override the localhost addresses in .env.
+x-app: &app
+  build: .
+  image: multichannel-hub-app
+  env_file: .env
+
 services:
   hub-db:                       # Hub's Postgres (source of truth)
     image: postgres:16
@@ -9,8 +17,37 @@ services:
       POSTGRES_DB: hub
     ports:
       - "5433:5432"             # 5433 on your laptop, so it won't clash with a local Postgres
+    healthcheck:                # The hub creates its tables on startup, so Postgres must be ready
+      test: ["CMD", "pg_isready", "-U", "hub"]
+      interval: 5s
+      retries: 20
     volumes:
       - hub-db-data:/var/lib/postgresql/data
+
+  hub:                          # FastAPI
+    <<: *app
+    command: uvicorn hub.main:app --host 0.0.0.0 --port 8000
+    depends_on:
+      hub-db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://hub:hub@hub-db:5432/hub
+      WOO_URL: http://woocommerce
+      PRESTASHOP_URL: http://prestashop
+      PRESTASHOP_HOST: localhost:8081         # must match PS_DOMAIN below
+    ports:
+      - "8000:8000"
+
+  dashboard:                    # Streamlit
+    <<: *app
+    command: streamlit run dashboard/app.py --server.address 0.0.0.0 --server.headless true
+    depends_on:
+      - hub
+    environment:
+      HUB_URL: http://hub:8000                # used by the dashboard's own requests
+      HUB_PUBLIC_URL: http://localhost:8000   # used by links you click in the browser
+    ports:
+      - "8501:8501"
 
   woo-db:                       # MySQL for WordPress/WooCommerce
     image: mysql:8.0
@@ -36,16 +73,46 @@ services:
     volumes:
       - woo-data:/var/www/html
 
-  marketplace:                  # Channel B: mock marketplace API from db.json
-    image: node:22-alpine
-    working_dir: /app
-    command: npx -y json-server@0.17.4 --watch db.json --host 0.0.0.0 --port 3001
-    ports:
-      - "3001:3001"
+  prestashop-db:                # MySQL for PrestaShop
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: prestashop
+      MYSQL_USER: ps
+      MYSQL_PASSWORD: ps
+      MYSQL_ROOT_PASSWORD: rootpw
+    healthcheck:                # PrestaShop's auto-install fails if MySQL isn't ready yet
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-ups", "-pps"]
+      interval: 5s
+      retries: 30
     volumes:
-      - ./mock-marketplace:/app
+      - prestashop-db-data:/var/lib/mysql
+
+  prestashop:                   # Channel B: PrestaShop, standing in for the marketplace
+    image: prestashop/prestashop:8
+    depends_on:
+      prestashop-db:
+        condition: service_healthy
+    environment:                # Local demo logins only
+      DB_SERVER: prestashop-db
+      DB_USER: ps
+      DB_PASSWD: ps
+      DB_NAME: prestashop
+      PS_INSTALL_AUTO: 1        # Installs itself on first start (takes a few minutes)
+      PS_DOMAIN: localhost:8081
+      PS_FOLDER_ADMIN: admin-hub
+      PS_FOLDER_INSTALL: install-hub
+      PS_LANGUAGE: en
+      PS_COUNTRY: PH
+      ADMIN_MAIL: admin@example.com
+      ADMIN_PASSWD: HubDemo2026!
+    ports:
+      - "8081:80"
+    volumes:
+      - prestashop-data:/var/www/html
 
 volumes:
   hub-db-data:
   woo-db-data:
   woo-data:
+  prestashop-db-data:
+  prestashop-data:

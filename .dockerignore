@@ -1,0 +1,7 @@
+# Keep secrets and local clutter out of the image
+.env
+.git
+.venv
+.vscode
+**/__pycache__
+**/*.pyc

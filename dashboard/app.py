@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 HUB = os.getenv("HUB_URL", "http://localhost:8000")
+HUB_PUBLIC = os.getenv("HUB_PUBLIC_URL", HUB)  # the hub's address as your browser sees it
 
 st.set_page_config(page_title="Multichannel Hub", layout="wide")
 page = st.sidebar.radio("Page", ["Products", "Orders", "Dashboard"])
@@ -21,12 +22,13 @@ def get(path):
 
 if page == "Products":
     st.title("Products")
+    if st.button("Import from channels"):
+        st.write(httpx.post(f"{HUB}/products/import", timeout=120).json())
     df = pd.DataFrame(get("/products"))
     st.dataframe(df, use_container_width=True, hide_index=True)
     sku = st.selectbox("Publish to all channels", df["sku"] if not df.empty else [])
     if st.button("Publish") and sku:
         st.write(httpx.post(f"{HUB}/products/{sku}/publish", timeout=60).json())
-    # TODO (Wed): bulk CSV upload with st.file_uploader
 
 elif page == "Orders":
     st.title("Orders (all channels)")
@@ -43,5 +45,4 @@ else:
         st.plotly_chart(px.bar(orders.groupby("channel", as_index=False)["total"].sum(),
                                x="channel", y="total", title="Sales by channel"),
                         use_container_width=True)
-    # TODO (Thu): 3 shared filters (channel, date range, category) + 3 more charts
-    st.link_button("Download orders (XLSX)", f"{HUB}/export?table=orders&format=xlsx")
+    st.link_button("Download orders (XLSX)", f"{HUB_PUBLIC}/export?table=orders&format=xlsx")

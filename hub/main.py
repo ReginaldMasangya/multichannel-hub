@@ -1,5 +1,6 @@
 """Hub API.  Run from the project folder:  uvicorn hub.main:app --reload"""
 import io
+from datetime import datetime
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException
@@ -7,7 +8,7 @@ from fastapi.responses import StreamingResponse
 
 from hub.db import ChannelListing, Order, Product, SessionLocal, StockEvent, engine, init_db
 from hub.llm import adapt_listing
-from hub.sync import CHANNELS, pull_orders
+from hub.sync import CHANNELS, pull_orders, push_stock_everywhere
 from pydantic import BaseModel
 
 app = FastAPI(title="Multichannel Hub")
@@ -31,6 +32,79 @@ def list_products():
     with SessionLocal() as s:
         return [{"sku": p.sku, "name": p.name, "category": p.category,
                  "price": float(p.price), "stock": p.stock} for p in s.query(Product)]
+
+
+@app.post("/products/import")
+def import_products():
+    """Pull listings from every channel into the hub, matched by SKU, then push
+    the hub's stock number back so every channel agrees.
+
+    Only stock is merged: the lowest stock across channels (and any existing
+    hub row) wins, so the hub never overstates availability. Existing hub
+    name/price are left untouched; new products are created from channel data.
+    """
+    grouped: dict[str, dict] = {}
+    errors = {}
+    for name, client in CHANNELS.items():
+        try:
+            rows = client.import_listings()
+        except Exception as e:  # one channel down shouldn't stop the other
+            errors[name] = str(e)
+            continue
+        for row in rows:
+            sku = row["sku"]
+            if not sku:
+                continue
+            bucket = grouped.setdefault(sku, {"stock": row["stock"], "rows": []})
+            bucket["stock"] = min(bucket["stock"], row["stock"])
+            bucket["rows"].append((name, row))
+
+    created = updated = linked = 0
+    push_failed = []
+    with SessionLocal() as s:
+        for sku, bucket in grouped.items():
+            product = s.query(Product).filter_by(sku=sku).first()
+            if product is None:
+                first = bucket["rows"][0][1]
+                product = Product(sku=sku, name=first["title"] or sku,
+                                  price=first["price"], stock=bucket["stock"],
+                                  description=first["description"] or None)
+                s.add(product)
+                s.flush()
+                created += 1
+            elif bucket["stock"] < product.stock:
+                product.stock = bucket["stock"]
+                updated += 1
+
+            for name, row in bucket["rows"]:
+                listing = s.query(ChannelListing).filter_by(
+                    product_id=product.id, channel=name).first()
+                if listing is None:
+                    s.add(ChannelListing(product_id=product.id, channel=name,
+                                         external_id=row["external_id"],
+                                         title=row["title"],
+                                         last_synced_at=datetime.utcnow()))
+                else:
+                    listing.external_id = row["external_id"]
+                    listing.title = row["title"]
+                    listing.last_synced_at = datetime.utcnow()
+                linked += 1
+
+            # A failed push doesn't raise: it's recorded on the listing for retry.
+            push_stock_everywhere(s, product)
+            push_failed += [
+                {"sku": sku, "channel": l.channel, "error": l.last_push_error}
+                for l in s.query(ChannelListing).filter_by(
+                    product_id=product.id, needs_push=True)]
+        s.commit()
+
+    result = {"skus": len(grouped), "created": created, "updated": updated,
+              "listings": linked}
+    if errors:
+        result["errors"] = errors
+    if push_failed:
+        result["push_failed"] = push_failed
+    return result
 
 
 @app.post("/products/{sku}/publish")
